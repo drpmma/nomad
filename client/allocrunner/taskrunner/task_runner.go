@@ -20,6 +20,7 @@ import (
 	"github.com/hashicorp/nomad/client/config"
 	"github.com/hashicorp/nomad/client/consul"
 	"github.com/hashicorp/nomad/client/driver/env"
+	cinterfaces "github.com/hashicorp/nomad/client/interfaces"
 	cstate "github.com/hashicorp/nomad/client/state"
 	cstructs "github.com/hashicorp/nomad/client/structs"
 	"github.com/hashicorp/nomad/client/vaultclient"
@@ -161,6 +162,9 @@ type TaskRunner struct {
 	resourceUsage     *cstructs.TaskResourceUsage
 	resourceUsageLock sync.Mutex
 
+	// deviceStatsReporter is used to lookup resource usage for alloc devices
+	deviceStatsReporter cinterfaces.DeviceStatsReporter
+
 	// PluginSingletonLoader is a plugin loader that will returns singleton
 	// instances of the plugins.
 	pluginSingletonLoader loader.PluginCatalog
@@ -182,6 +186,9 @@ type Config struct {
 
 	// StateUpdater is used to emit updated task state
 	StateUpdater interfaces.TaskStateHandler
+
+	// deviceStatsReporter is used to lookup resource usage for alloc devices
+	DeviceStatsReporter cinterfaces.DeviceStatsReporter
 
 	// PluginSingletonLoader is a plugin loader that will returns singleton
 	// instances of the plugins.
@@ -224,6 +231,7 @@ func NewTaskRunner(config *Config) (*TaskRunner, error) {
 		localState:            state.NewLocalState(),
 		stateDB:               config.StateDB,
 		stateUpdater:          config.StateUpdater,
+		deviceStatsReporter:   config.DeviceStatsReporter,
 		killCtx:               killCtx,
 		killCtxCancel:         killCancel,
 		ctx:                   trCtx,
@@ -882,6 +890,10 @@ func (tr *TaskRunner) LatestResourceUsage() *cstructs.TaskResourceUsage {
 func (tr *TaskRunner) UpdateStats(ru *cstructs.TaskResourceUsage) {
 	tr.resourceUsageLock.Lock()
 	tr.resourceUsage = ru
+	if tr.deviceStatsReporter != nil {
+		deviceResources := tr.Alloc().AllocatedResources.Tasks[tr.Task().Name].Devices
+		tr.resourceUsage.ResourceUsage.DeviceStats = tr.deviceStatsReporter.LatestDeviceResourceStats(deviceResources)
+	}
 	tr.resourceUsageLock.Unlock()
 	if ru != nil {
 		tr.emitStats(ru)
